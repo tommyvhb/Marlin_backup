@@ -99,7 +99,7 @@
   #define HAS_ONESTEP_LEVELING 1
 #endif
 
-#if HAS_MESH || HAS_ONESTEP_LEVELING
+#if HAS_MESH || (HAS_LEVELING && HAS_ZOFFSET_ITEM)
   #include "../../../feature/bedlevel/bedlevel.h"
   #include "bedlevel_tools.h"
 #endif
@@ -1825,7 +1825,7 @@ void DWIN_SetDataDefaults() {
   #endif
   TERN_(BAUD_RATE_GCODE, SetBaud250K());
   #if BOTH(LED_CONTROL_MENU, HAS_COLOR_LEDS)
-    leds.set_default();
+    TERN_(LED_COLOR_PRESETS, leds.set_default());
     ApplyLEDColor();
   #endif
 }
@@ -2138,7 +2138,7 @@ void HomeZ() { queue.inject(F("G28Z")); }
       );
       gcode.process_subcommands_now(cmd);
     #else
-      set_bed_leveling_enabled(false);
+      TERN_(HAS_LEVELING, set_bed_leveling_enabled(false));
       gcode.process_subcommands_now(F("G28O\nG0Z0F300\nM400"));
     #endif
     ui.reset_status();
@@ -2226,10 +2226,9 @@ void SetPID(celsius_t t, heater_id_t h) {
 #endif
 
 #if ENABLED(BAUD_RATE_GCODE)
-  void HMI_SetBaudRate() {
-    if (HMI_data.Baud115K) SetBaud115K(); else SetBaud250K();
-  }
+  void HMI_SetBaudRate() { HMI_data.Baud115K ? SetBaud115K() : SetBaud250K(); }
   void SetBaudRate() {
+    HMI_data.Baud115K ^= true;
     HMI_SetBaudRate();
     Draw_Chkb_Line(CurrentMenu->line(), HMI_data.Baud115K);
     DWIN_UpdateLCD();
@@ -2268,9 +2267,7 @@ void SetPID(celsius_t t, heater_id_t h) {
   #endif
   #if HAS_COLOR_LEDS
     void ApplyLEDColor() {
-      HMI_data.Led_Color = LEDColor(
-        TERN(HAS_WHITE_LED, { 0, 0, 0, leds.color.w }, { leds.color.r, leds.color.g, leds.color.b })
-      );
+      HMI_data.Led_Color = LEDColor( {leds.color.r, leds.color.g, leds.color.b OPTARG(HAS_WHITE_LED, HMI_data.Led_Color.w) } );
     }
     void LiveLEDColor(uint8_t *color) { *color = MenuData.Value; leds.update(); }
     void LiveLEDColorR() { LiveLEDColor(&leds.color.r); }
@@ -2670,13 +2667,15 @@ void SetStepsY() { HMI_value.axis = Y_AXIS, SetPFloatOnClick( MIN_STEP, MAX_STEP
 void SetStepsZ() { HMI_value.axis = Z_AXIS, SetPFloatOnClick( MIN_STEP, MAX_STEP, UNITFDIGITS); }
 #if HAS_HOTEND
   void SetStepsE() { HMI_value.axis = E_AXIS; SetPFloatOnClick( MIN_STEP, MAX_STEP, UNITFDIGITS); }
-  void SetHotendPidT() { SetPIntOnClick(MIN_ETEMP, MAX_ETEMP); }
+  #if ENABLED(PIDTEMP)
+    void SetHotendPidT() { SetPIntOnClick(MIN_ETEMP, MAX_ETEMP); }
+  #endif
 #endif
-#if HAS_HEATED_BED
+#if ENABLED(PIDTEMPBED)
   void SetBedPidT() { SetPIntOnClick(MIN_BEDTEMP, MAX_BEDTEMP); }
 #endif
 
-#if HAS_HOTEND || HAS_HEATED_BED
+#if EITHER(PIDTEMP, PIDTEMPBED)
   void SetPidCycles() { SetPIntOnClick(3, 50); }
   void SetKp() { SetPFloatOnClick(0, 1000, 2); }
   void ApplyPIDi() {
@@ -3225,10 +3224,10 @@ void Draw_AdvancedSettings_Menu() {
     #if HAS_HOME_OFFSET
       MENU_ITEM_F(ICON_HomeOffset, MSG_SET_HOME_OFFSETS, onDrawSubMenu, Draw_HomeOffset_Menu);
     #endif
-    #if HAS_HOTEND
+    #if ENABLED(PIDTEMP)
       MENU_ITEM(ICON_PIDNozzle, F(STR_HOTEND_PID " Settings"), onDrawSubMenu, Draw_HotendPID_Menu);
     #endif
-    #if HAS_HEATED_BED
+    #if ENABLED(PIDTEMPBED)
       MENU_ITEM(ICON_PIDbed, F(STR_BED_PID " Settings"), onDrawSubMenu, Draw_BedPID_Menu);
     #endif
       MENU_ITEM_F(ICON_FilSet, MSG_FILAMENT_SET, onDrawSubMenu, Draw_FilSet_Menu);
@@ -3415,7 +3414,7 @@ void Draw_GetColor_Menu() {
           EDIT_ITEM_F(ICON_LedControl, MSG_COLORS_GREEN, onDrawPInt8Menu, SetLEDColorG, &leds.color.g);
           EDIT_ITEM_F(ICON_LedControl, MSG_COLORS_BLUE, onDrawPInt8Menu, SetLEDColorB, &leds.color.b);
           #if ENABLED(HAS_WHITE_LED)
-            EDIT_ITEM_F(ICON_LedControl, MSG_COLORS_WHITE, onDrawPInt8Menu, SetLedColorW, &leds.color.w);
+            EDIT_ITEM_F(ICON_LedControl, MSG_COLORS_WHITE, onDrawPInt8Menu, SetLEDColorW, &leds.color.w);
           #endif
         #endif
       #endif
@@ -3671,10 +3670,10 @@ void Draw_Steps_Menu() {
   CurrentMenu->draw();
 }
 
-#if HAS_HOTEND
+#if ENABLED(PIDTEMP)
   void Draw_HotendPID_Menu() {
     checkkey = Menu;
-    if (SetMenu(HotendPIDMenu, F(STR_HOTEND_PID " Settings"),8)) {
+    if (SetMenu(HotendPIDMenu, F(STR_HOTEND_PID " Settings"), 8)) {
       BACK_ITEM(Draw_AdvancedSettings_Menu);
       MENU_ITEM(ICON_PIDNozzle, F(STR_HOTEND_PID), onDrawMenuItem, HotendPID);
       EDIT_ITEM(ICON_PIDValue, F("Set" STR_KP), onDrawPFloat2Menu, SetKp, &thermalManager.temp_hotend[0].pid.Kp);
@@ -3690,10 +3689,10 @@ void Draw_Steps_Menu() {
   }
 #endif
 
-#if HAS_HEATED_BED
+#if ENABLED(PIDTEMPBED)
   void Draw_BedPID_Menu() {
     checkkey = Menu;
-    if (SetMenu(BedPIDMenu, F(STR_BED_PID " Settings"),8)) {
+    if (SetMenu(BedPIDMenu, F(STR_BED_PID " Settings"), 8)) {
       BACK_ITEM(Draw_AdvancedSettings_Menu);
       MENU_ITEM(ICON_PIDNozzle, F(STR_BED_PID), onDrawMenuItem,BedPID);
       EDIT_ITEM(ICON_PIDValue, F("Set" STR_KP), onDrawPFloat2Menu, SetKp, &thermalManager.temp_bed.pid.Kp);
@@ -3828,6 +3827,7 @@ void Draw_Steps_Menu() {
 #endif // AUTO_BED_LEVELING_UBL
 
 #if HAS_MESH
+
   void Draw_MeshSet_Menu() {
     checkkey = Menu;
     if (SetMenu(MeshMenu, GET_TEXT_F(MSG_MESH_LEVELING), 15)) {
